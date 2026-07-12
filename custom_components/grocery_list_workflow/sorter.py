@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -130,7 +131,7 @@ class GroceryRouteSorter:
         self._profile = parse_route_profile(route_profile)
         self._ai_entity_id = ai_entity_id
         self._learned_routes = Store(
-            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v7"
+            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v8"
         )
         self._learned_item_locations: dict[str, str] | None = None
         self._unclassified_items: set[str] | None = None
@@ -238,28 +239,11 @@ class GroceryRouteSorter:
                     "instructions": (
                         f"Classify this grocery item: {summary!r}. Choose the most likely "
                         "store-route stop from the allowed options. Make a sensible "
-                        "grocery-category guess and report confidence from 0 to 1.\n\n"
+                        "grocery-category guess. Reply with exactly one allowed route stop "
+                        "ID and no other text.\n\n"
                         f"Allowed route stops: {json.dumps(allowed_stops)}"
                     ),
                     "entity_id": self._ai_entity_id,
-                    "structure": {
-                        "stop_id": {
-                            "selector": {
-                                "select": {
-                                    "options": [stop["id"] for stop in allowed_stops]
-                                }
-                            },
-                            "description": "The most likely allowed route stop ID.",
-                            "required": True,
-                        },
-                        "confidence": {
-                            "selector": {
-                                "number": {"min": 0, "max": 1, "step": 0.01}
-                            },
-                            "description": "Confidence from 0 to 1.",
-                            "required": True,
-                        },
-                    },
                 },
                 blocking=True,
                 return_response=True,
@@ -267,14 +251,18 @@ class GroceryRouteSorter:
         except Exception as err:  # AI is optional; sorting must still work without it.
             LOGGER.warning("AI grocery classification request failed: %s", err)
             return None
-        classification = self._extract_classification(response)
+        classification = self._extract_classification(
+            response, {stop["id"] for stop in allowed_stops}
+        )
         if classification is None:
             LOGGER.warning("AI grocery response shape: %r", response)
         return classification
 
     @staticmethod
-    def _extract_classification(response: Any) -> Mapping[str, Any] | None:
-        """Extract one structured AI classification from an HA service response."""
+    def _extract_classification(
+        response: Any, allowed_stop_ids: set[str]
+    ) -> Mapping[str, Any] | None:
+        """Extract a short route-ID answer from an HA service response."""
         if not isinstance(response, Mapping):
             return None
         candidates = [response]
@@ -286,6 +274,11 @@ class GroceryRouteSorter:
             seen.add(id(candidate))
             if "stop_id" in candidate and "confidence" in candidate:
                 return candidate
+            raw_data = candidate.get("data")
+            if isinstance(raw_data, str):
+                for stop_id in allowed_stop_ids:
+                    if re.search(rf"(?<![a-z0-9_]){re.escape(stop_id)}(?![a-z0-9_])", raw_data, re.I):
+                        return {"stop_id": stop_id, "confidence": 1}
             candidates.extend(
                 value for value in candidate.values() if isinstance(value, Mapping)
             )

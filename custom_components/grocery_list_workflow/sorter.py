@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -17,6 +18,7 @@ LEGACY_ROUTE_HEADER_PREFIX = "\U0001F4CD "
 # Grocery items are usually category-level guesses; prefer a plausible route stop
 # over the catch-all fallback while still rejecting a model's zero-confidence output.
 AI_CONFIDENCE_THRESHOLD = 0.20
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +130,7 @@ class GroceryRouteSorter:
         self._profile = parse_route_profile(route_profile)
         self._ai_entity_id = ai_entity_id
         self._learned_routes = Store(
-            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v5"
+            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v6"
         )
         self._learned_item_locations: dict[str, str] | None = None
         self._unclassified_items: set[str] | None = None
@@ -195,13 +197,20 @@ class GroceryRouteSorter:
         for summary in unresolved:
             classification = await self._async_classify_item(summary, allowed_stops)
             if classification is None:
+                LOGGER.warning("AI grocery classification returned no structured result")
                 continue
             processed.add(_key(summary))
             stop_id = str(classification.get("stop_id", "")).strip()
             try:
                 confidence = float(classification.get("confidence", 0))
             except (TypeError, ValueError):
+                LOGGER.warning("AI grocery classification returned a nonnumeric confidence")
                 continue
+            LOGGER.warning(
+                "AI grocery classification returned stop_id=%s confidence=%s",
+                stop_id,
+                confidence,
+            )
             if stop_id in valid_ids and confidence >= AI_CONFIDENCE_THRESHOLD:
                 accepted[_key(summary)] = stop_id
 

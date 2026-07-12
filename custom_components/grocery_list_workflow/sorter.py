@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -125,7 +126,7 @@ class GroceryRouteSorter:
         self._profile = parse_route_profile(route_profile)
         self._ai_entity_id = ai_entity_id
         self._learned_routes = Store(
-            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v3"
+            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v4"
         )
         self._learned_item_locations: dict[str, str] | None = None
         self._unclassified_items: set[str] | None = None
@@ -184,13 +185,13 @@ class GroceryRouteSorter:
         valid_ids.discard(self._profile.fallback_id)
         accepted: dict[str, str] = {}
         processed: set[str] = set()
-        stop_options = [
-            location.id
+        allowed_stops = [
+            {"id": location.id, "label": location.label}
             for location in self._profile.locations
             if location.id in valid_ids
         ]
         for summary in unresolved:
-            classification = await self._async_classify_item(summary, stop_options)
+            classification = await self._async_classify_item(summary, allowed_stops)
             if classification is None:
                 continue
             processed.add(_key(summary))
@@ -214,7 +215,7 @@ class GroceryRouteSorter:
         )
 
     async def _async_classify_item(
-        self, summary: str, stop_options: list[str]
+        self, summary: str, allowed_stops: list[dict[str, str]]
     ) -> Mapping[str, Any] | None:
         """Classify one item with a schema that the AI provider can enforce."""
         try:
@@ -226,12 +227,17 @@ class GroceryRouteSorter:
                     "instructions": (
                         f"Classify this grocery item: {summary!r}. Choose the most likely "
                         "store-route stop from the allowed options. Make a sensible "
-                        "grocery-category guess and report confidence from 0 to 1."
+                        "grocery-category guess and report confidence from 0 to 1.\n\n"
+                        f"Allowed route stops: {json.dumps(allowed_stops)}"
                     ),
                     "entity_id": self._ai_entity_id,
                     "structure": {
                         "stop_id": {
-                            "selector": {"select": {"options": stop_options}},
+                            "selector": {
+                                "select": {
+                                    "options": [stop["id"] for stop in allowed_stops]
+                                }
+                            },
                             "description": "The most likely allowed route stop ID.",
                             "required": True,
                         },

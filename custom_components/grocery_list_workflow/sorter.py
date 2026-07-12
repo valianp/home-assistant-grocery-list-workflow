@@ -130,7 +130,7 @@ class GroceryRouteSorter:
         self._profile = parse_route_profile(route_profile)
         self._ai_entity_id = ai_entity_id
         self._learned_routes = Store(
-            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v6"
+            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v7"
         )
         self._learned_item_locations: dict[str, str] | None = None
         self._unclassified_items: set[str] | None = None
@@ -264,7 +264,8 @@ class GroceryRouteSorter:
                 blocking=True,
                 return_response=True,
             )
-        except Exception:  # AI is optional; sorting must still work without it.
+        except Exception as err:  # AI is optional; sorting must still work without it.
+            LOGGER.warning("AI grocery classification request failed: %s", err)
             return None
         classification = self._extract_classification(response)
         if classification is None:

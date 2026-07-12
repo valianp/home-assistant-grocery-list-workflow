@@ -189,16 +189,17 @@ class GroceryRouteSorter:
             "Classify the grocery items into the most likely store-route stop. "
             "Use only the allowed stop IDs. Make a sensible grocery-category guess when "
             "the item is not explicitly known, but report confidence from 0 to 1. "
-            "Return every item exactly once.\n\n"
+            "Return every item exactly once as a JSON object keyed by exact item text. "
+            "Each value must contain stop_id and confidence.\n\n"
             f"Allowed stops: {json.dumps(allowed_stops)}\n"
             f"Items: {json.dumps(unresolved)}"
         )
         structure = {
-            "classifications": {
-                "selector": {"object": {}},
+            "classification_response": {
+                "selector": {"text": {"multiline": True}},
                 "description": (
-                    "Object keyed by the exact item text. Each value is an object with "
-                    "a stop_id from the allowed stops and a numeric confidence from 0 to 1."
+                    "JSON object keyed by exact item text. Each value has a stop_id from "
+                    "the allowed stops and a numeric confidence from 0 to 1."
                 ),
                 "required": True,
             }
@@ -250,15 +251,27 @@ class GroceryRouteSorter:
         if not isinstance(response, Mapping):
             return {}
         candidates = [response]
-        candidates.extend(
-            value
-            for key in ("response", "result", "data")
-            if isinstance((value := response.get(key)), Mapping)
-        )
-        for candidate in candidates:
+        seen: set[int] = set()
+        while candidates:
+            candidate = candidates.pop()
+            if id(candidate) in seen:
+                continue
+            seen.add(id(candidate))
             classifications = candidate.get("classifications")
             if isinstance(classifications, Mapping):
                 return classifications
+            serialized = candidate.get("classification_response")
+            if isinstance(serialized, str):
+                try:
+                    classifications = json.loads(serialized)
+                except json.JSONDecodeError:
+                    pass
+                else:
+                    if isinstance(classifications, Mapping):
+                        return classifications
+            candidates.extend(
+                value for value in candidate.values() if isinstance(value, Mapping)
+            )
         return {}
 
     async def async_sort(self) -> None:

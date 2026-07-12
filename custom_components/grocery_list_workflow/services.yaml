@@ -1,0 +1,39 @@
+sync_now:
+  name: Synchronize now
+  description: Immediately reconcile the two linked to-do lists without changing their order.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+
+sort_now:
+  name: Sort now
+  description: Immediately group and order the target list using its private route profile.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+
+sync_and_sort:
+  name: Synchronize and sort now
+  description: Immediately reconcile the linked lists, then group and order the target list.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+
+set_route_profile:
+  name: Set private route profile
+  description: Store a route and item-to-stop mapping privately in the Home Assistant config entry.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+    route_profile:
+      required: true
+      selector:
+        object:

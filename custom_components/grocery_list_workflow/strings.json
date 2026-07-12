@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Grocery List Workflow",
+        "description": "Enter the source and target Home Assistant to-do entity IDs.",
+        "data": {
+          "source_entity_id": "Source to-do entity",
+          "target_entity_id": "Target to-do entity"
+        }
+      }
+    },
+    "error": {
+      "same_entity": "Source and target must be different entities.",
+      "entity_not_found": "Both entries must be currently available to-do entities."
+    },
+    "abort": {
+      "already_configured": "This source and target pair is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Private grocery route",
+        "description": "This JSON is stored in your Home Assistant config entry and is not part of the public integration repository.",
+        "data": {
+          "route_profile": "Route profile JSON"
+        }
+      }
+    },
+    "error": {
+      "invalid_route_profile": "The route profile JSON is invalid or references an unknown stop."
+    }
+  }
+}

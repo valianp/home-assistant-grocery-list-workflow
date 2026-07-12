@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+.coverage
+.pytest_cache/
+.storage/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+config.toml
+secrets.yaml
+credentials*.json
+token*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Home Assistant/runtime data and logs
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+home-assistant.log*
+
+# Editor and operating-system state
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

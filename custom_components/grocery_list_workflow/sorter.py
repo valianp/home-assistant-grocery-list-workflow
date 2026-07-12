@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -126,7 +125,7 @@ class GroceryRouteSorter:
         self._profile = parse_route_profile(route_profile)
         self._ai_entity_id = ai_entity_id
         self._learned_routes = Store(
-            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v2"
+            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v3"
         )
         self._learned_item_locations: dict[str, str] | None = None
         self._unclassified_items: set[str] | None = None
@@ -181,65 +180,31 @@ class GroceryRouteSorter:
         if not unresolved:
             return
 
-        locations = self._profile.locations
-        allowed_stops = [
-            {"id": location.id, "label": location.label}
-            for location in locations
-            if location.id != self._profile.fallback_id
-        ]
-        instructions = (
-            "Classify the grocery items into the most likely store-route stop. "
-            "Use only the allowed stop IDs. Make a sensible grocery-category guess when "
-            "the item is not explicitly known, but report confidence from 0 to 1. "
-            "Return every item exactly once as a JSON object keyed by exact item text. "
-            "Each value must contain stop_id and confidence.\n\n"
-            f"Allowed stops: {json.dumps(allowed_stops)}\n"
-            f"Items: {json.dumps(unresolved)}"
-        )
-        structure = {
-            "classification_response": {
-                "selector": {"text": {"multiline": True}},
-                "description": (
-                    "JSON object keyed by exact item text. Each value has a stop_id from "
-                    "the allowed stops and a numeric confidence from 0 to 1."
-                ),
-                "required": True,
-            }
-        }
-        try:
-            response = await self._hass.services.async_call(
-                "ai_task",
-                "generate_data",
-                {
-                    "task_name": "Classify new grocery-list items",
-                    "instructions": instructions,
-                    "entity_id": self._ai_entity_id,
-                    "structure": structure,
-                },
-                blocking=True,
-                return_response=True,
-            )
-        except Exception:  # AI is optional; sorting must still work without it.
-            return
-
-        classifications = self._extract_classifications(response)
         valid_ids = set(self._profile.locations_by_id)
         valid_ids.discard(self._profile.fallback_id)
         accepted: dict[str, str] = {}
-        for summary, classification in classifications.items():
-            if not isinstance(classification, Mapping):
+        processed: set[str] = set()
+        stop_options = [
+            location.id
+            for location in self._profile.locations
+            if location.id in valid_ids
+        ]
+        for summary in unresolved:
+            classification = await self._async_classify_item(summary, stop_options)
+            if classification is None:
                 continue
+            processed.add(_key(summary))
             stop_id = str(classification.get("stop_id", "")).strip()
             try:
                 confidence = float(classification.get("confidence", 0))
             except (TypeError, ValueError):
                 continue
             if stop_id in valid_ids and confidence >= AI_CONFIDENCE_THRESHOLD:
-                accepted[_key(str(summary))] = stop_id
+                accepted[_key(summary)] = stop_id
 
         self._learned_item_locations.update(accepted)
         self._unclassified_items.update(
-            _key(summary) for summary in unresolved if _key(summary) not in accepted
+            summary_key for summary_key in processed if summary_key not in accepted
         )
         await self._learned_routes.async_save(
             {
@@ -248,11 +213,49 @@ class GroceryRouteSorter:
             }
         )
 
+    async def _async_classify_item(
+        self, summary: str, stop_options: list[str]
+    ) -> Mapping[str, Any] | None:
+        """Classify one item with a schema that the AI provider can enforce."""
+        try:
+            response = await self._hass.services.async_call(
+                "ai_task",
+                "generate_data",
+                {
+                    "task_name": "Classify a grocery-list item",
+                    "instructions": (
+                        f"Classify this grocery item: {summary!r}. Choose the most likely "
+                        "store-route stop from the allowed options. Make a sensible "
+                        "grocery-category guess and report confidence from 0 to 1."
+                    ),
+                    "entity_id": self._ai_entity_id,
+                    "structure": {
+                        "stop_id": {
+                            "selector": {"select": {"options": stop_options}},
+                            "description": "The most likely allowed route stop ID.",
+                            "required": True,
+                        },
+                        "confidence": {
+                            "selector": {
+                                "number": {"min": 0, "max": 1, "step": 0.01}
+                            },
+                            "description": "Confidence from 0 to 1.",
+                            "required": True,
+                        },
+                    },
+                },
+                blocking=True,
+                return_response=True,
+            )
+        except Exception:  # AI is optional; sorting must still work without it.
+            return None
+        return self._extract_classification(response)
+
     @staticmethod
-    def _extract_classifications(response: Any) -> Mapping[str, Any]:
-        """Handle the response shapes used by Home Assistant AI task providers."""
+    def _extract_classification(response: Any) -> Mapping[str, Any] | None:
+        """Extract one structured AI classification from an HA service response."""
         if not isinstance(response, Mapping):
-            return {}
+            return None
         candidates = [response]
         seen: set[int] = set()
         while candidates:
@@ -260,22 +263,12 @@ class GroceryRouteSorter:
             if id(candidate) in seen:
                 continue
             seen.add(id(candidate))
-            classifications = candidate.get("classifications")
-            if isinstance(classifications, Mapping):
-                return classifications
-            serialized = candidate.get("classification_response")
-            if isinstance(serialized, str):
-                try:
-                    classifications = json.loads(serialized)
-                except json.JSONDecodeError:
-                    pass
-                else:
-                    if isinstance(classifications, Mapping):
-                        return classifications
+            if "stop_id" in candidate and "confidence" in candidate:
+                return candidate
             candidates.extend(
                 value for value in candidate.values() if isinstance(value, Mapping)
             )
-        return {}
+        return None
 
     async def async_sort(self) -> None:
         """Create target-only headers and place source items in route order."""

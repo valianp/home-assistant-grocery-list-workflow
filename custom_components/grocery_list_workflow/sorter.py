@@ -126,7 +126,7 @@ class GroceryRouteSorter:
         self._profile = parse_route_profile(route_profile)
         self._ai_entity_id = ai_entity_id
         self._learned_routes = Store(
-            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes"
+            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v2"
         )
         self._learned_item_locations: dict[str, str] | None = None
         self._unclassified_items: set[str] | None = None
@@ -183,7 +183,9 @@ class GroceryRouteSorter:
 
         locations = self._profile.locations
         allowed_stops = [
-            {"id": location.id, "label": location.label} for location in locations
+            {"id": location.id, "label": location.label}
+            for location in locations
+            if location.id != self._profile.fallback_id
         ]
         instructions = (
             "Classify the grocery items into the most likely store-route stop. "
@@ -222,6 +224,7 @@ class GroceryRouteSorter:
 
         classifications = self._extract_classifications(response)
         valid_ids = set(self._profile.locations_by_id)
+        valid_ids.discard(self._profile.fallback_id)
         accepted: dict[str, str] = {}
         for summary, classification in classifications.items():
             if not isinstance(classification, Mapping):

@@ -22,9 +22,11 @@
     "step": {
       "init": {
         "title": "Private grocery route",
-        "description": "This JSON is stored in your Home Assistant config entry and is not part of the public integration repository.",
+        "description": "This JSON is stored in your Home Assistant config entry and is not part of the public integration repository. AI classification is optional: it asks the selected Home Assistant AI task only about new unmapped items, then privately caches confident answers.",
         "data": {
-          "route_profile": "Route profile JSON"
+          "route_profile": "Route profile JSON",
+          "ai_classification_enabled": "Use AI for new unmapped items",
+          "ai_entity_id": "AI task entity"
         }
       }
     },

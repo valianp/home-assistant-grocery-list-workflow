@@ -9,7 +9,15 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_ROUTE_PROFILE, CONF_SOURCE_ENTITY, CONF_TARGET_ENTITY, DOMAIN
+from .const import (
+    CONF_AI_CLASSIFICATION_ENABLED,
+    CONF_AI_ENTITY_ID,
+    CONF_ROUTE_PROFILE,
+    CONF_SOURCE_ENTITY,
+    CONF_TARGET_ENTITY,
+    DEFAULT_AI_ENTITY_ID,
+    DOMAIN,
+)
 from .sorter import GroceryRouteSorter, parse_route_profile
 from .sync import TodoSynchronizer
 
@@ -57,6 +65,17 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         )
         await hass.config_entries.async_reload(entry.entry_id)
 
+    async def set_ai_classification(call) -> None:
+        entry = await _entry(hass, call.data["entry_id"])
+        options = {
+            **entry.options,
+            CONF_AI_CLASSIFICATION_ENABLED: call.data[CONF_AI_CLASSIFICATION_ENABLED],
+        }
+        if CONF_AI_ENTITY_ID in call.data:
+            options[CONF_AI_ENTITY_ID] = call.data[CONF_AI_ENTITY_ID]
+        hass.config_entries.async_update_entry(entry, options=options)
+        await hass.config_entries.async_reload(entry.entry_id)
+
     schema = vol.Schema({vol.Required("entry_id"): str})
     hass.services.async_register(DOMAIN, "sync_now", sync_now, schema=schema)
     hass.services.async_register(DOMAIN, "sort_now", sort_now, schema=schema)
@@ -72,6 +91,18 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             }
         ),
     )
+    hass.services.async_register(
+        DOMAIN,
+        "set_ai_classification",
+        set_ai_classification,
+        schema=vol.Schema(
+            {
+                vol.Required("entry_id"): str,
+                vol.Required(CONF_AI_CLASSIFICATION_ENABLED): bool,
+                vol.Optional(CONF_AI_ENTITY_ID): str,
+            }
+        ),
+    )
     return True
 
 
@@ -84,6 +115,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: GroceryWorkflowConfigEnt
         source,
         target,
         entry.options.get(CONF_ROUTE_PROFILE),
+        ai_entity_id=(
+            entry.options.get(CONF_AI_ENTITY_ID, DEFAULT_AI_ENTITY_ID)
+            if entry.options.get(CONF_AI_CLASSIFICATION_ENABLED, False)
+            else None
+        ),
+        cache_key=entry.entry_id,
     )
     synchronizer = TodoSynchronizer(
         hass,

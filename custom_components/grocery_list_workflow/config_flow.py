@@ -12,7 +12,15 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFl
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import CONF_ROUTE_PROFILE, CONF_SOURCE_ENTITY, CONF_TARGET_ENTITY, DOMAIN
+from .const import (
+    CONF_AI_CLASSIFICATION_ENABLED,
+    CONF_AI_ENTITY_ID,
+    CONF_ROUTE_PROFILE,
+    CONF_SOURCE_ENTITY,
+    CONF_TARGET_ENTITY,
+    DEFAULT_AI_ENTITY_ID,
+    DOMAIN,
+)
 from .sorter import DEFAULT_ROUTE_PROFILE, parse_route_profile
 
 
@@ -83,7 +91,14 @@ class GroceryListWorkflowOptionsFlow(OptionsFlow):
             else:
                 return self.async_create_entry(
                     title="",
-                    data={**self.config_entry.options, CONF_ROUTE_PROFILE: route_profile},
+                    data={
+                        **self.config_entry.options,
+                        CONF_ROUTE_PROFILE: route_profile,
+                        CONF_AI_CLASSIFICATION_ENABLED: user_input[
+                            CONF_AI_CLASSIFICATION_ENABLED
+                        ],
+                        CONF_AI_ENTITY_ID: user_input[CONF_AI_ENTITY_ID],
+                    },
                 )
 
         current = self.config_entry.options.get(CONF_ROUTE_PROFILE, DEFAULT_ROUTE_PROFILE)
@@ -96,7 +111,21 @@ class GroceryListWorkflowOptionsFlow(OptionsFlow):
                         default=json.dumps(current, indent=2),
                     ): selector.TextSelector(
                         selector.TextSelectorConfig(multiline=True)
-                    )
+                    ),
+                    vol.Optional(
+                        CONF_AI_CLASSIFICATION_ENABLED,
+                        default=self.config_entry.options.get(
+                            CONF_AI_CLASSIFICATION_ENABLED, False
+                        ),
+                    ): selector.BooleanSelector(),
+                    vol.Optional(
+                        CONF_AI_ENTITY_ID,
+                        default=self.config_entry.options.get(
+                            CONF_AI_ENTITY_ID, DEFAULT_AI_ENTITY_ID
+                        ),
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="ai_task")
+                    ),
                 }
             ),
             errors=errors,

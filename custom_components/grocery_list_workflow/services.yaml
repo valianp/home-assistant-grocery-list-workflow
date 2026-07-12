@@ -37,3 +37,22 @@ set_route_profile:
       required: true
       selector:
         object:
+
+set_ai_classification:
+  name: Set AI classification
+  description: Enable or disable AI classification of newly unmapped grocery items. Confident classifications are cached privately in Home Assistant.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+    ai_classification_enabled:
+      required: true
+      selector:
+        boolean:
+    ai_entity_id:
+      required: false
+      selector:
+        entity:
+          filter:
+            domain: ai_task

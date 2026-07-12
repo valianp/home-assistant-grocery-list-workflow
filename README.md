@@ -7,6 +7,7 @@ An optional Home Assistant custom integration that synchronizes any two native `
 - Reconciles additions, removals, and completion status between a source and target to-do list every five minutes.
 - Adds `[Route]` checkbox headers and reorders the target list using a private route profile stored in Home Assistant.
 - Keeps generated headers local to the target list; they never synchronize back to the source.
+- Optionally asks a Home Assistant AI task to classify only newly unmapped items. Confident results are cached privately, so known items do not consume AI calls again.
 - Provides `grocery_list_workflow.sync_now`, `sort_now`, and `sync_and_sort` services.
 
 ## Setup
@@ -34,3 +35,7 @@ This integration deliberately has no Skylight or Google credentials. It works th
 ```
 
 Keep real store addresses, personal route labels, and shopping mappings in the private profile only.
+
+## Optional AI classification
+
+In the integration's **Configure** dialog, enable **Use AI for new unmapped items** and select a Home Assistant `ai_task` entity (for example, a low-power OpenAI task). On a sort, the workflow sends only previously unknown item names plus your private stop labels. It accepts classifications at 0.65 confidence or above and saves them in Home Assistant's local integration storage. Low-confidence or unavailable-AI results remain at the profile's `fallback` stop.

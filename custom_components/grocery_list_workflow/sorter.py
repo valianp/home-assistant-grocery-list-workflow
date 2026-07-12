@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from homeassistant.components.todo import TodoItem
 from homeassistant.components.todo.const import DATA_COMPONENT
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 
 ROUTE_HEADER_PREFIX = "[Route] "
 LEGACY_ROUTE_HEADER_PREFIX = "\U0001F4CD "
+AI_CONFIDENCE_THRESHOLD = 0.65
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,11 +116,20 @@ class GroceryRouteSorter:
         source_entity: str,
         target_entity: str,
         route_profile: Any = None,
+        *,
+        ai_entity_id: str | None = None,
+        cache_key: str | None = None,
     ) -> None:
         self._hass = hass
         self._source_entity = source_entity
         self._target_entity = target_entity
         self._profile = parse_route_profile(route_profile)
+        self._ai_entity_id = ai_entity_id
+        self._learned_routes = Store(
+            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes"
+        )
+        self._learned_item_locations: dict[str, str] | None = None
+        self._unclassified_items: set[str] | None = None
         self._lock = asyncio.Lock()
 
     async def _items(self, entity_id: str) -> list[dict[str, Any]]:
@@ -128,8 +140,126 @@ class GroceryRouteSorter:
 
     def _location(self, summary: str) -> StoreLocation:
         locations = self._profile.locations_by_id
-        location_id = self._profile.item_locations.get(_key(summary), self._profile.fallback_id)
+        item_locations = {**self._profile.item_locations, **(self._learned_item_locations or {})}
+        location_id = item_locations.get(_key(summary), self._profile.fallback_id)
         return locations[location_id]
+
+    async def _async_load_learned_locations(self) -> None:
+        """Load private AI suggestions saved for this workflow entry."""
+        if self._learned_item_locations is not None:
+            return
+        cached = await self._learned_routes.async_load()
+        raw_items = cached.get("items", {}) if isinstance(cached, dict) else {}
+        raw_unclassified = (
+            cached.get("unclassified", []) if isinstance(cached, dict) else []
+        )
+        valid_ids = set(self._profile.locations_by_id)
+        self._learned_item_locations = {
+            _key(str(summary)): str(location_id)
+            for summary, location_id in raw_items.items()
+            if str(location_id) in valid_ids
+        }
+        self._unclassified_items = {
+            _key(str(summary)) for summary in raw_unclassified if str(summary).strip()
+        }
+
+    async def _async_classify_unmapped(self, summaries: list[str]) -> None:
+        """Ask an opt-in HA AI task to classify only previously unseen items."""
+        await self._async_load_learned_locations()
+        if not self._ai_entity_id:
+            return
+
+        known = {**self._profile.item_locations, **self._learned_item_locations}
+        unresolved = sorted(
+            {
+                _key(summary): summary
+                for summary in summaries
+                if _key(summary) not in known
+                and _key(summary) not in self._unclassified_items
+            }.values()
+        )
+        if not unresolved:
+            return
+
+        locations = self._profile.locations
+        allowed_stops = [
+            {"id": location.id, "label": location.label} for location in locations
+        ]
+        instructions = (
+            "Classify the grocery items into the most likely store-route stop. "
+            "Use only the allowed stop IDs. Make a sensible grocery-category guess when "
+            "the item is not explicitly known, but report confidence from 0 to 1. "
+            "Return every item exactly once.\n\n"
+            f"Allowed stops: {json.dumps(allowed_stops)}\n"
+            f"Items: {json.dumps(unresolved)}"
+        )
+        structure = {
+            "classifications": {
+                "selector": {"object": {}},
+                "description": (
+                    "Object keyed by the exact item text. Each value is an object with "
+                    "a stop_id from the allowed stops and a numeric confidence from 0 to 1."
+                ),
+                "required": True,
+            }
+        }
+        try:
+            response = await self._hass.services.async_call(
+                "ai_task",
+                "generate_data",
+                {
+                    "task_name": "Classify new grocery-list items",
+                    "instructions": instructions,
+                    "entity_id": self._ai_entity_id,
+                    "structure": structure,
+                },
+                blocking=True,
+                return_response=True,
+            )
+        except Exception:  # AI is optional; sorting must still work without it.
+            return
+
+        classifications = self._extract_classifications(response)
+        valid_ids = set(self._profile.locations_by_id)
+        accepted: dict[str, str] = {}
+        for summary, classification in classifications.items():
+            if not isinstance(classification, Mapping):
+                continue
+            stop_id = str(classification.get("stop_id", "")).strip()
+            try:
+                confidence = float(classification.get("confidence", 0))
+            except (TypeError, ValueError):
+                continue
+            if stop_id in valid_ids and confidence >= AI_CONFIDENCE_THRESHOLD:
+                accepted[_key(str(summary))] = stop_id
+
+        self._learned_item_locations.update(accepted)
+        self._unclassified_items.update(
+            _key(summary) for summary in unresolved if _key(summary) not in accepted
+        )
+        await self._learned_routes.async_save(
+            {
+                "items": self._learned_item_locations,
+                "unclassified": sorted(self._unclassified_items),
+            }
+        )
+
+    @staticmethod
+    def _extract_classifications(response: Any) -> Mapping[str, Any]:
+        """Handle the response shapes used by Home Assistant AI task providers."""
+        if not isinstance(response, Mapping):
+            return {}
+        candidates = [response]
+        candidates.extend(
+            value
+            for key in ("response", "result", "data")
+            if isinstance((value := response.get(key)), Mapping)
+        )
+        for candidate in candidates:
+            classifications = candidate.get("classifications")
+            if isinstance(classifications, Mapping):
+                return classifications
+        return {}
 
     async def async_sort(self) -> None:
         """Create target-only headers and place source items in route order."""
@@ -139,6 +269,12 @@ class GroceryRouteSorter:
             source_items, target_items = await asyncio.gather(
                 self._items(self._source_entity), self._items(self._target_entity)
             )
+            source_summaries = [
+                item["summary"]
+                for item in source_items
+                if item.get("summary") and not is_route_header(item["summary"])
+            ]
+            await self._async_classify_unmapped(source_summaries)
             planned = sorted(
                 (
                     (self._location(item["summary"]), item["summary"])

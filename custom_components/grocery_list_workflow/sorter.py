@@ -266,7 +266,10 @@ class GroceryRouteSorter:
             )
         except Exception:  # AI is optional; sorting must still work without it.
             return None
-        return self._extract_classification(response)
+        classification = self._extract_classification(response)
+        if classification is None:
+            LOGGER.warning("AI grocery response shape: %r", response)
+        return classification
 
     @staticmethod
     def _extract_classification(response: Any) -> Mapping[str, Any] | None:

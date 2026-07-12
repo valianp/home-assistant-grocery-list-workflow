@@ -14,7 +14,9 @@ from homeassistant.helpers.storage import Store
 
 ROUTE_HEADER_PREFIX = "[Route] "
 LEGACY_ROUTE_HEADER_PREFIX = "\U0001F4CD "
-AI_CONFIDENCE_THRESHOLD = 0.65
+# Grocery items are usually category-level guesses; prefer a plausible route stop
+# over the catch-all fallback while still rejecting a model's zero-confidence output.
+AI_CONFIDENCE_THRESHOLD = 0.20
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +128,7 @@ class GroceryRouteSorter:
         self._profile = parse_route_profile(route_profile)
         self._ai_entity_id = ai_entity_id
         self._learned_routes = Store(
-            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v4"
+            hass, 1, f"grocery_list_workflow.{cache_key or target_entity}.learned_routes_v5"
         )
         self._learned_item_locations: dict[str, str] | None = None
         self._unclassified_items: set[str] | None = None

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import string
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -14,8 +15,8 @@ from homeassistant.components.todo.const import DATA_COMPONENT
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-ROUTE_HEADER_PREFIX = "[Route] "
-LEGACY_ROUTE_HEADER_PREFIX = "\U0001F4CD "
+ROUTE_HEADER_PREFIX = "\U0001F4CD "
+LEGACY_ROUTE_HEADER_PREFIXES = ("[Route] ",)
 # Grocery items are usually category-level guesses; prefer a plausible route stop
 # over the catch-all fallback while still rejecting a model's zero-confidence output.
 AI_CONFIDENCE_THRESHOLD = 0.20
@@ -54,6 +55,11 @@ DEFAULT_ROUTE_PROFILE: dict[str, Any] = {
 
 def _key(summary: str) -> str:
     return summary.strip().casefold()
+
+
+def _display_text(value: str) -> str:
+    """Return a consistent title-cased display value for the target list."""
+    return string.capwords(value.strip())
 
 
 def parse_route_profile(value: Any) -> RouteProfile:
@@ -108,7 +114,7 @@ def is_route_header(summary: str | None) -> bool:
     """Whether an item is workflow-owned presentation metadata."""
     return bool(
         summary
-        and summary.startswith((ROUTE_HEADER_PREFIX, LEGACY_ROUTE_HEADER_PREFIX))
+        and summary.startswith((ROUTE_HEADER_PREFIX, *LEGACY_ROUTE_HEADER_PREFIXES))
     )
 
 
@@ -315,12 +321,15 @@ class GroceryRouteSorter:
                 for item in target_items
                 if is_route_header(item.get("summary"))
             }
-            needed = {f"{ROUTE_HEADER_PREFIX}{location.label}" for location, _ in planned}
+            needed = {
+                f"{ROUTE_HEADER_PREFIX}{_display_text(location.label)}"
+                for location, _ in planned
+            }
             stale_uids = [item["uid"] for summary, item in headers.items() if summary not in needed]
             if stale_uids:
                 await target_entity.async_delete_todo_items(stale_uids)
             for location in self._profile.locations:
-                header = f"{ROUTE_HEADER_PREFIX}{location.label}"
+                header = f"{ROUTE_HEADER_PREFIX}{_display_text(location.label)}"
                 if header in needed and header not in headers:
                     await target_entity.async_create_todo_item(TodoItem(summary=header))
 
@@ -337,11 +346,27 @@ class GroceryRouteSorter:
                 if is_route_header(item.get("summary"))
             }
 
+            for item in items_by_name.values():
+                desired_summary = _display_text(item["summary"])
+                if item["summary"] != desired_summary:
+                    await target_entity.async_update_todo_item(
+                        TodoItem(uid=item["uid"], summary=desired_summary)
+                    )
+            await target_entity.async_update()
+            target_items = await self._items(self._target_entity)
+            items_by_name = {
+                _key(item["summary"]): item
+                for item in target_items
+                if item.get("summary") and not is_route_header(item["summary"])
+            }
+
             previous_uid: str | None = None
             active_location: StoreLocation | None = None
             for location, summary in planned:
                 if location != active_location:
-                    header = headers[f"{ROUTE_HEADER_PREFIX}{location.label}"]
+                    header = headers[
+                        f"{ROUTE_HEADER_PREFIX}{_display_text(location.label)}"
+                    ]
                     await target_entity.async_move_todo_item(header["uid"], previous_uid)
                     previous_uid = header["uid"]
                     active_location = location
